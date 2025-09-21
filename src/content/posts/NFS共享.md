@@ -8,6 +8,9 @@ category: '教程'
 draft: false 
 lang: ''
 ---
+:::tip
+我自己一般不用NFS, 毕竟主力是Windows, 内网NAS用的SMB
+:::
 
 ## 安装:
 对于Debian, `nfs-kernel-server`是NFS服务器必需的, `nfs-common`是用来挂载NFS用的
@@ -24,7 +27,7 @@ sudo apt install nfs-kernel-server nfs-common
 <!-- /etc/exports -->
 /mnt/nfs_share	192.168.1.0/24(rw,no_subtree_check,crossmnt,fsid=0)
 ```
-值得注意的是, 目标目录进行如下配置:
+值得注意的是, 目标目录需要进行如下配置:
 ```
 sudo chown nobody:nogroup /mnt/nfs_share
 sudo chmod 777 /mnt/nfs_share
