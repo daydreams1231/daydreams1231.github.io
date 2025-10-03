@@ -8,7 +8,11 @@ category: '教程'
 draft: false 
 lang: ''
 ---
+:::WARN
+Wireguard不是为了翻墙设计的, 只适合在国内互联使用, 其流量特征较明显, 易导致IP被墙!
 
+另外WG是基于udp进行传输的, 可能会遇到运营商的QoS限速问题
+:::
 # 安装
 ```shell
 sudo apt update
