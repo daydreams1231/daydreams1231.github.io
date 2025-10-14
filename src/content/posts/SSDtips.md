@@ -11,13 +11,14 @@ lang: ''
 
 # TRIM
 [Ref](https://www.ichenfu.com/2022/10/05/enable-trim-on-usb-attached-scsi-ssds) <br>
+[Ref2](https://wszqkzqk.github.io/2023/04/27/USB%E8%BF%9E%E6%8E%A5%E7%9A%84SSD%E8%AE%BE%E5%A4%87%E4%BD%BF%E7%94%A8trim%E5%91%BD%E4%BB%A4/) <br>
 [ArchWiki](https://wiki.archlinux.org/title/Solid_state_drive#External_SSD_with_TRIM_support) <br>
 
 使用`lsblk -D`命令来查看trim启用情况 <br>
 如果`DISC-GRAN`非0, 代表这个设备支持TRIM <br>
 如果`DISC-MAX`非0, 代表这个设备启用了TRIM <br>
 
-DISC-GRAN   DISC-MAX <br>
+DISC-GRAN   DISC-MAX    (1代表非0值)
         0          0    不支持TRIM <br>
         1          0    支持TRIM, 但没启用 <br>
         1          1    支持且启用TRIM <br>
@@ -37,11 +38,14 @@ cat /sys/block/XXXXXX/device/scsi_disk/XXXXXX/provisioning_mode
 echo unmap > /sys/block/XXXXXX/device/scsi_disk/XXXXXX/provisioning_mode
 
 # 设置设备在插入时自动更新其状态
-echo 'ACTION=="add|change", ATTRS{idVendor}=="0bda", ATTRS{idProduct}=="9220", SUBSYSTEM=="scsi_disk", ATTR{provisioning_mode}="unmap"' >>/etc/udev/rules.d/10-uas-discard.rules
-# 记得重启系统, 让规则生效
+echo 'ACTION=="add|change", ATTRS{idVendor}=="0bda", ATTRS{idProduct}=="9220", SUBSYSTEM=="scsi_disk", ATTR{provisioning_mode}="unmap"' >> /etc/udev/rules.d/10-uas-discard.rules
+
+sudo udevadm control --reload-rules
 ```
+
+在确认Trim能被启用后: <br>
 对于一个SSD, 如果格式化为ext4, 则在挂载时最好指定`discard`参数, 来启用TRIM功能 <br>
-如果是f2fs, FS会自动定期在空闲时TRIM(前提是没手动禁用trim) <br>
+如果是f2fs, FS会自动定期在空闲时TRIM<br>
 
 :::TIP
 mount命令显示设备的挂载参数, 也能用来看是否启用了trim
@@ -49,6 +53,6 @@ mount命令显示设备的挂载参数, 也能用来看是否启用了trim
 
 :::INFO
 Debian下有一个自动TRIM服务: /usr/lib/systemd/system/fstrim.service <br>
-默认情况下, 它会一周进行一次TRIM
+默认情况下, 它会一周进行一次TRIM (/usr/lib/systemd/system/fstrim.timer)
 :::
 

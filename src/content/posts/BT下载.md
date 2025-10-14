@@ -145,6 +145,7 @@ remotePort = 5678
 :::
 
 > 隧道软件: Wireguard OpenVPN Zerotier Easytier, 其中最方便的是Wireguard, 可惜其抗GFW能力太弱了, 只适合国内用, 用在国外很大概率封IP, OpenVPN稍微好点, 但流量特征还是非常明显, 容易被识别出来.
+
 假设隧道内, BT下载机器的IP为172.16.1.2 (tun0), VPS的IP是172.16.1.1 <br>
 在配置完隧道后, 使用如下命令来检查隧道能否上网. <br>
 ```shell
@@ -190,7 +191,7 @@ iptables -t nat -I PREROUTING -p udp --dport 5678 -j DNAT --to-destination 172.1
 但往后面一想, 实际意义不大, 一是你从单个Peer那不会下载太多数据(前提是你的种子不是冷门种), 其二是国内Peer就算直连, 你也不一定连的上NAT后面的Peer, 还是让自己位于公网更方便. <br>
 
 # 自用示范 (可能会频繁更新)
-## 使用QBEE + Xray
+## Xray反向代理
 [xray Wiki](https://xtls.github.io/config/reverse.html) <br>
 
 xray本身是支持反向代理的, 另外由于它是一个通用的代理软件, 所以常规的http/socks入站那肯定是支持的 <br>
@@ -385,13 +386,15 @@ xray服务器端: (vless_reality_tcp入站)<br>
 
 ```
 
-## 使用QBEE + gost
+## gost隧道
 这种方法直接让QB绑定到VPN隧道, 所以没必要用什么socks代理 <br>
 示范:
-  - `server`: ./gost -L=tun://:5421?net=172.16.1.1/24 -L relay+wss://:5443?bind=true
-  - `client`: ./gost -L=tun://:0/:5421?net=172.16.1.2/24 -F relay+wss://服务端IP:5443
-以上命令使用tun隧道, 用websocket传输数据 <br>
+  - `server`: **./gost -L=tun://:5421?net=172.16.1.1/24,fddd:1234::1 -L relay+wss://:5443?bind=true**
+  - `client`: **./gost -L=tun://:0/:5421?net=172.16.1.2/24,fddd:1234::2 -F relay+wss://服务端IP:5443**
 
+以上命令使用tun隧道, 用websocket传输数据 <br>
+relay+wss: 意味着relay协议通过wss传输数据, 默认relay是直接传输tcp数据 <br>
+加号前面的相当于代理协议, 后面的是代理传输层 <br>
 ```shell
 iptables -t nat -I PREROUTING -p tcp --dport 5678 -j DNAT --to-destination 172.16.1.2:5678
 iptables -t nat -I PREROUTING -p udp --dport 5678 -j DNAT --to-destination 172.16.1.2:5678
@@ -399,7 +402,187 @@ iptables -t nat -I PREROUTING -p udp --dport 5678 -j DNAT --to-destination 172.1
 iptables -A FORWARD -i tun0 -j ACCEPT
 iptables -A FORWARD -o tun0 -j ACCEPT
 iptables -t nat -A POSTROUTING -o ens5 -j MASQUERADE
+
+ip6tables -t nat -A PREROUTING -p tcp --dport 5678 -j DNAT --to-destination [fddd:1234::2]:5678
+ip6tables -t nat -A PREROUTING -p udp --dport 5678 -j DNAT --to-destination [fddd:1234::2]:5678
+ip6tables -A FORWARD -i tun0 -j ACCEPT
+ip6tables -A FORWARD -o tun0 -j ACCEPT
+ip6tables -t nat -A POSTROUTING -o ens5 -j MASQUERADE
 ```
+## Gost隧道 + Xray传输
+尽管上面的方法已经足够抗GFW和QoS了, 但还是要给出更保险的一种方法. 毕竟gost不是专为了翻墙而生的, 专业的事交给专业的人去做. <br>
+如下配置使用gost作为创建隧道的软件, 其tun数据流通过Xray进行传输, 但为了方便验证, `server.json`中的入站部分和`client.json`中的出站部分仅仅使用了vless+TCP传输, 实际使用时记得修改这两部分. <br>
+实际在公网上传数据的是 **tcp/3128** 端口; 其他端口仅用作内部数据交换, 不要对这些端口放行防火墙! <br>
+这种方法需要在同一台主机上同时运行gost和xray, 它们之间通过无密码的socks5连接 <br>
+另外这种方法实测有bug, 闲置一段时间后隧道会断开, 建议在后台挂个ping. <br>
+client  		  		client				   server		 		server <br>
+Gost   <--(socks5)-->   Xray    <--(ANY)-->    Xray  <--(socks5)--> Gost   <br>
+```json title="server.json" 
+{
+	"log": {
+		"loglevel": "warning"
+	},
+	"routing": {
+        "rules": [{
+            "type": "field",
+            "inboundTag": ["local-in"],
+            "outboundTag": "gost-out"
+        }]
+    },
+	"inbounds": [{// 实际使用时请添加 TLS/reality 部分
+        "protocol": "vless",
+        "port": 3128,
+        "tag": "local-in",
+        "settings": {
+            "clients": [{
+                "id": "CHANGE_ME_PLZ",
+                "level": 0
+            }],
+            "decryption":"none"
+        }
+    }],
+	"outbounds": [
+		{
+			"protocol": "socks",
+			"tag": "gost-out",
+			"settings": {
+				"servers": [{
+					"address": "127.0.0.1",
+      				"port": 5555,
+      				"users": []
+          		}]
+			}
+		}
+	]
+}
+```
+```json title="client.json"
+{
+	"log": {
+		"loglevel": "warning"
+	},
+	"routing": {
+        "rules": [{
+            "type": "field",
+            "inboundTag": ["socks-in"],
+            "outboundTag": "local-out"
+        }]
+    },
+	"inbounds": [{
+        "listen": "127.0.0.1",
+		"tag": "socks-in",
+		"port": 5555,
+		"protocol": "socks",
+		"settings": {
+			"auth": "noauth",
+			"udp": true
+		}
+	}],
+	"outbounds": [
+		{
+			"protocol": "vless",
+			"tag": "local-out",
+			"settings": {
+				"vnext": [{
+					"address": "<YOUR VPS IP",
+      				"port": 3128,
+      				"users": [{
+                        "id": "CHANGE_ME_PLZ",
+                        "encryption": "none",
+                        "level": 0
+                    }]
+          		}]
+			}
+		}
+	]
+}
+```
+
+```shell
+# SERVER
+sudo ./gost -L=tun://:5421?net=172.16.1.1/24,fddd:1234::1 -L socks5://:5555?udp=true
+iptables -t nat -A PREROUTING -p tcp --dport 5678 -j DNAT --to-destination 172.16.1.2:5678
+iptables -t nat -A PREROUTING -p udp --dport 5678 -j DNAT --to-destination 172.16.1.2:5678
+iptables -A FORWARD -i tun0 -j ACCEPT
+iptables -A FORWARD -o tun0 -j ACCEPT
+iptables -t nat -A POSTROUTING -o ens5 -j MASQUERADE
+
+ip6tables -t nat -A PREROUTING -p tcp --dport 5678 -j DNAT --to-destination [fddd:1234::2]:5678
+ip6tables -t nat -A PREROUTING -p udp --dport 5678 -j DNAT --to-destination [fddd:1234::2]:5678
+ip6tables -A FORWARD -i tun0 -j ACCEPT
+ip6tables -A FORWARD -o tun0 -j ACCEPT
+ip6tables -t nat -A POSTROUTING -o ens5 -j MASQUERADE
+
+# Client
+sudo ./gost -L=tun://:0/:5421?net=172.16.1.2/24,fddd:1234::2 -F socks5://127.0.0.1:5555?relay=udp
+## 在客户端上配置默认路由, 这样tun0接口才能上网
+# 对于Linux客户端
+route add default via 10.126.126.1 metric 150
+route -6 add default via fddd:1234::1 metric 150
+# 对于Windows客户端
+route ADD 0.0.0.0 MASK 0.0.0.0 10.126.126.1 METRIC 150
+route -6 ADD ::/0 fddd:1234::1 METRIC 150
+```
+
+## Easytier隧道
+使用easytier创建tun隧道, 再用iptables转发流量 <br>
+
+由于ET的GUI生成的配置比较简陋, 无法满足此方法中的特定需求, 建议使用CLI或者配置文件 <br>
+
+> 如果使用easytier的端口转发功能而不是iptables转发, 流量来源会变成VPS上tun设备的IP
+
+```shell
+# 服务器: 建立隧道
+./easytier-core --ipv4 10.126.126.1/24 --ipv6 fddd:1234::1/64 --network-name NetworkName_CHANGE_THIS --network-secret NetworkPWD_CHANGE_THIS -p tcp://public.easytier.cn:11010 --enable-exit-node
+
+# 客户端: 连接隧道
+./easytier-core --ipv4 10.126.126.2/24 --ipv6 fddd:1234::2/64 --network-name NetworkName_CHANGE_THIS --network-secret NetworkPWD_CHANGE_THIS -p tcp://public.easytier.cn:11010 --exit-nodes 10.126.126.1,fddd:1234::1
+## 创建完隧道后还只能ping通对方, tun0接口还不能上网
+## 客户端要额外手动配置一条默认路由后tun0接口才能正常上网, 注意每次启动隧道时都要设置
+# 对于Linux客户端 (需要root权限)
+route add default via 10.126.126.1 metric 150
+route -6 add default via fddd:1234::1 metric 150
+# 对于Windows客户端 (需要管理员权限)
+route ADD 0.0.0.0 MASK 0.0.0.0 10.126.126.1 METRIC 150
+route -6 ADD ::/0 fddd:1234::1 METRIC 150
+
+# 检查tun0接口是否正常 (如果你的网络环境无法正常解析4.ipw.cn和6.ipw.cn, 例如ipv6的DNS被过滤掉了, 请手动在hosts中指定ip地址, 或者通过resolve参数指定ip)
+ping -S 10.126.126.2 10.126.126.1
+ping -S 10.126.126.2 223.5.5.5
+curl --interface 10.126.126.2 4.ipw.cn
+
+ping -S fddd:1234::2 fddd:1234::1
+ping -S fddd:1234::2 2001:4860:4860::8888
+curl --interface fddd:1234::2 6.ipw.cn
+
+# server ipv4路由配置
+iptables -t nat -A PREROUTING -p tcp --dport 5678 -j DNAT --to-destination 10.126.126.2:5678
+iptables -t nat -A PREROUTING -p udp --dport 5678 -j DNAT --to-destination 10.126.126.2:5678
+iptables -A FORWARD -i tun0 -j ACCEPT
+iptables -A FORWARD -o tun0 -j ACCEPT
+# server ipv6路由配置
+ip6tables -t nat -A PREROUTING -p tcp --dport 5678 -j DNAT --to-destination [fddd:1234::2]:5678
+ip6tables -t nat -A PREROUTING -p udp --dport 5678 -j DNAT --to-destination [fddd:1234::2]:5678
+ip6tables -A FORWARD -i tun0 -j ACCEPT
+ip6tables -A FORWARD -o tun0 -j ACCEPT
+
+## FIX BUGS, 非必要勿使用
+iptables -t nat -A POSTROUTING -o ens5 -j MASQUERADE
+ip6tables -t nat -A POSTROUTING -o ens5 -j MASQUERADE
+```
+:::Warning
+截至2025.10, ET对exit node的支持貌似仍然欠缺, 具体表现为ipv4的首个数据包极大概率丢包, ipv6无法正常连到公网.
+使用Wireshark抓包发现对于ipv6, 其ping请求能发送, 但没有相应的response包, 经排查发现是服务器上没有对IPv6进行NAT66处理, 在手动输入FIX BUGS部分的命令后问题解决. 另外对ipv4进行同样的操作后, ipv4的首个数据包也不丢包了. 奇了怪了, ipv4不需要手动配置nat怎么ipv6就需要了呢? <br>
+:::
+
+可能是这种指定出口流量的方法和翻墙VPN极其相似, 网上关于exit node的用法极少... <br>
+另外, 由于Easytier流量特征和Wireguard类似, 极易被GFW识别, 故仅推荐在国内使用. <br>
+
+Easytier的监听器, 只需要在中转服务器上设置监听tcp + udp + wss即可 <br>
+
+在P2P直连成功建立前, Peer间的通信依靠中转服务器的监听端口, Peer都连接到中转服务器的监听端口, 由服务器完成路由转发 <br>
+在P2P直连建立后, 双方通信端口是各自在nat网络下打洞建立的随机端口, 当然, 如果你有公网IP且11010端口开放, 那还是用的11010端口, 此时你就是服务器.
+
 
 # 其他
 ## 在BT软件里绑定上网接口
