@@ -389,25 +389,28 @@ xray服务器端: (vless_reality_tcp入站)<br>
 ## gost隧道
 这种方法直接让QB绑定到VPN隧道, 所以没必要用什么socks代理 <br>
 示范:
-  - `server`: **./gost -L=tun://:5421?net=172.16.1.1/24,fddd:1234::1 -L relay+wss://:5443?bind=true**
-  - `client`: **./gost -L=tun://:0/:5421?net=172.16.1.2/24,fddd:1234::2 -F relay+wss://服务端IP:5443**
+  - `server`: **./gost -L=tun://:5421?net=172.16.1.1/24,fddd:1234::1/64 -L relay+wss://:5443?bind=true**
+  - `client`: **./gost -L=tun://:0/:5421?net=172.16.1.2/24,fddd:1234::2/64 -F relay+wss://服务端IP:5443**
 
 以上命令使用tun隧道, 用websocket传输数据 <br>
 relay+wss: 意味着relay协议通过wss传输数据, 默认relay是直接传输tcp数据 <br>
 加号前面的相当于代理协议, 后面的是代理传输层 <br>
 ```shell
-iptables -t nat -I PREROUTING -p tcp --dport 5678 -j DNAT --to-destination 172.16.1.2:5678
-iptables -t nat -I PREROUTING -p udp --dport 5678 -j DNAT --to-destination 172.16.1.2:5678
+export out_interface=eth0
+export bt_port=5678
+export tun_name=tun0
 
-iptables -A FORWARD -i tun0 -j ACCEPT
-iptables -A FORWARD -o tun0 -j ACCEPT
-iptables -t nat -A POSTROUTING -o ens5 -j MASQUERADE
+iptables -t nat -I PREROUTING -p tcp --dport $bt_port -j DNAT --to-destination 172.16.1.2:$bt_port
+iptables -t nat -I PREROUTING -p udp --dport $bt_port -j DNAT --to-destination 172.16.1.2:$bt_port
+iptables -A FORWARD -i $tun_name -j ACCEPT
+iptables -A FORWARD -o $tun_name -j ACCEPT
+iptables -t nat -A POSTROUTING -o $out_interface -j MASQUERADE
 
-ip6tables -t nat -A PREROUTING -p tcp --dport 5678 -j DNAT --to-destination [fddd:1234::2]:5678
-ip6tables -t nat -A PREROUTING -p udp --dport 5678 -j DNAT --to-destination [fddd:1234::2]:5678
-ip6tables -A FORWARD -i tun0 -j ACCEPT
-ip6tables -A FORWARD -o tun0 -j ACCEPT
-ip6tables -t nat -A POSTROUTING -o ens5 -j MASQUERADE
+ip6tables -t nat -A PREROUTING -p tcp --dport $bt_port -j DNAT --to-destination [fddd:1234::2]:$bt_port
+ip6tables -t nat -A PREROUTING -p udp --dport $bt_port -j DNAT --to-destination [fddd:1234::2]:$bt_port
+ip6tables -A FORWARD -i $tun_name -j ACCEPT
+ip6tables -A FORWARD -o $tun_name -j ACCEPT
+ip6tables -t nat -A POSTROUTING -o $out_interface -j MASQUERADE
 ```
 ## Gost隧道 + Xray传输
 尽管上面的方法已经足够抗GFW和QoS了, 但还是要给出更保险的一种方法. 毕竟gost不是专为了翻墙而生的, 专业的事交给专业的人去做. <br>

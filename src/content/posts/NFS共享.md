@@ -9,7 +9,7 @@ draft: false
 lang: ''
 ---
 :::tip
-我自己一般不用NFS, 毕竟主力是Windows, 内网NAS用的SMB
+我自己一般不用NFS, 毕竟主力是Windows, 内网连NAS用的SMB, Openlist处理局域网文件用FTP(smb老是read error, response error: The network name was deleted.只能单线程跑任务)
 :::
 
 ## 安装:
@@ -53,3 +53,7 @@ sudo mount.nfs4 192.168.1.X:/home /users
 192.168.1.X:/nfs    /LOCAL_DIR nfs4    soft,intr,rsize=8192,wsize=8192
 ```
 如果是OpenWRT, 需要先安装nfs-utils 和 kmod-fs-nfs包
+
+如果挂载提示 No Such Device, 请检查:
+lsmod | grep nfs
+看是否有nfsd这个模块

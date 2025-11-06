@@ -12,6 +12,24 @@ lang: ''
 # 安装
 ```shell
 wget https://get.docker.com -O get-docker.sh && sudo bash get-docker.sh
+
+# 或者:
+# Add Docker's official GPG key:
+sudo apt-get update
+sudo apt-get install ca-certificates curl
+sudo install -m 0755 -d /etc/apt/keyrings
+sudo curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc
+sudo chmod a+r /etc/apt/keyrings/docker.asc
+
+# Add the repository to Apt sources:
+echo \
+  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian \
+  $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
+  sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+sudo apt-get update
+
+sudo apt-get install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+
 ```
 
 # 卸载
@@ -111,18 +129,27 @@ services:
 ```
 
 ## Aria2
+由于镜像没对下载的文件做校验, 导致经常下载到不完整的文件, 故推荐在创建容器前手动下载文件:
+
 ```shell
+wget https://p3terx.github.io/aria2.conf/aria2.conf -O /root/config/aria2/aria2.conf
+wget https://p3terx.github.io/aria2.conf/script.conf -O /root/config/aria2/script.conf
+wget https://p3terx.github.io/aria2.conf/core -O /root/config/aria2/script/core
+wget https://p3terx.github.io/aria2.conf/clean.sh -O /root/config/aria2/script/clean.sh
+wget https://p3terx.github.io/aria2.conf/delete.sh -O /root/config/aria2/script/delete.sh
+
 sudo docker run -d \
     --name aria2-pro \
     --restart unless-stopped \
     --log-opt max-size=1m \
-    --network host \
+    -p 6800:6800 \
     -e PUID=1000 \
     -e PGID=1000 \
     -e RPC_SECRET=<PASSWORD> \
     -e RPC_PORT=6800 \
     -e LISTEN_PORT=23456 \
     -e IPV6_MODE=true \
+    -e UPDATE_TRACKERS=false \
     -v /root/config/aria2:/config \
     -v /mnt/disk:/downloads \
     --dns 223.5.5.5 \
