@@ -46,6 +46,10 @@ sudo rm /etc/apt/keyrings/docker.asc
 ```shell
 sudo dockerd --debugg
 ```
+# 查看容器资源使用情况
+```shell
+docker stats
+```
 
 # 换用nftables (可能有兼容性问题, 慎用)
 ```json title="/etc/docker/daemon.json"
@@ -190,6 +194,16 @@ docker run -d \
     adguard/adguardhome:latest
 ```
 
+## Pi-Hole
+比ADG还轻量的DNS服务器, 同样支持DNS缓存, 记录等功能. <br>
+以Docker运行容器的内存占用为例, ADG占用70M, 而Pi-hole只占用9M, pi-hole还支持alpine平台, 整体占用还能再低 <br>
+不过也不是没缺点, 它的分组功能是给域名屏蔽列表用的, 暂时不能做到对不同组的客户端使用不同的DNS服务器. <br>
+不过这功能没什么用, 旁路由场景中DNS都是指向旁路由的, 就算指向内网DNS服务器, 并且把对应客户端的DNS转发到旁路由, 最后旁路由还是要把请求转发回去<br>
+管理页面为 IP:8080/admin <br>
+see doc: [Pi Hole](https://github.com/pi-hole/docker-pi-hole)
+```shell
+docker run --name pihole  -p 8080:80/tcp -p 4433:443/tcp -e TZ=Asia/Shanghai -e FTLCONF_webserver_api_password="123456" -e FTLCONF_dns_listeningMode=all -v ./pihole:/etc/pihole -v ./etc-dnsmasq.d:/etc/dnsmasq.d --cap-add NET_ADMIN --restart unless-stopped pihole/pihole:latest
+```
 ## PeerBanHelper
 ```shell
 docker run -d \

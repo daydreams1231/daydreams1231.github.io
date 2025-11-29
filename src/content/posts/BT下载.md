@@ -182,14 +182,6 @@ iptables -t nat -I PREROUTING -p udp --dport 5678 -j DNAT --to-destination 172.1
 
 如果BT绑定到全部接口, 在eth0和tun0上都能访问互联网, 此时如果尝试连接一个IP, 走的接口不一定, 有可能是eth0也可能是tun0, 与默认路由优先级无关<br>
 
-# 后记
-文章写完时我想到一个方法: <br>
-本地BT连接VPS代理 + 隧道(但不绑定) + 远程转发到隧道 <br>
-
-毕竟`Peer连接到你`, 只需要VPS上能转发到本地即可, 至于转发到本地的哪个接口并不重要(前提是目标接口必须被监听)<br>
-而`本地BT连接VPS代理`这一步是很容易实现分流的, 让Tracker和国外Peer走VPS, 国内Peer直接直连, 听着像方法一的Plus版本 <br>
-但往后面一想, 实际意义不大, 一是你从单个Peer那不会下载太多数据(前提是你的种子不是冷门种), 其二是国内Peer就算直连, 你也不一定连的上NAT后面的Peer, 还是让自己位于公网更方便. <br>
-
 # 自用示范 (可能会频繁更新)
 ## Xray反向代理
 [xray Wiki](https://xtls.github.io/config/reverse.html) <br>
@@ -386,15 +378,26 @@ xray服务器端: (vless_reality_tcp入站)<br>
 
 ```
 
-## gost隧道
-这种方法直接让QB绑定到VPN隧道, 所以没必要用什么socks代理 <br>
-示范:
-  - `server`: **./gost -L=tun://:5421?net=172.16.1.1/24,fddd:1234::1/64 -L relay+wss://:5443?bind=true**
-  - `client`: **./gost -L=tun://:0/:5421?net=172.16.1.2/24,fddd:1234::2/64 -F relay+wss://服务端IP:5443**
+## Gost隧道
+这种方法直接让BT软件绑定到VPN隧道, 所以没必要用什么socks代理 <br>
+假设服务器是双栈(IPv4+IPv6), 示范:
+```shell
+# Server cli
+./gost -L "tun://:5421?net=172.16.1.1/24,fddd:1234::1/64" -L relay+wss://:5443?bind=true
 
+# Client cli
+./gost -L "tun://:0/:5421?net=172.16.1.2/24,fddd:1234::2/64" -F relay+wss://服务端IP:5443
+```
 以上命令使用tun隧道, 用websocket传输数据 <br>
 relay+wss: 意味着relay协议通过wss传输数据, 默认relay是直接传输tcp数据 <br>
 加号前面的相当于代理协议, 后面的是代理传输层 <br>
+
+:::NOTE
+Windows下需要准备wintun.dll, 放在gost.exe同级目录下 <br>
+Win下的gost无法配置ipv6, 所以对于windows用户,  后文关于ipv6的部分可自动省略
+:::
+
+在服务器上, 需要额外的操作:
 ```shell
 export out_interface=eth0
 export bt_port=5678
@@ -402,16 +405,40 @@ export tun_name=tun0
 
 iptables -t nat -I PREROUTING -p tcp --dport $bt_port -j DNAT --to-destination 172.16.1.2:$bt_port
 iptables -t nat -I PREROUTING -p udp --dport $bt_port -j DNAT --to-destination 172.16.1.2:$bt_port
-iptables -A FORWARD -i $tun_name -j ACCEPT
+iptables -A FORWARD -i $tun_name ! -o $tun_name -j ACCEPT
 iptables -A FORWARD -o $tun_name -j ACCEPT
 iptables -t nat -A POSTROUTING -o $out_interface -j MASQUERADE
 
 ip6tables -t nat -A PREROUTING -p tcp --dport $bt_port -j DNAT --to-destination [fddd:1234::2]:$bt_port
 ip6tables -t nat -A PREROUTING -p udp --dport $bt_port -j DNAT --to-destination [fddd:1234::2]:$bt_port
-ip6tables -A FORWARD -i $tun_name -j ACCEPT
+ip6tables -A FORWARD -i $tun_name ! -o $tun_name -j ACCEPT
 ip6tables -A FORWARD -o $tun_name -j ACCEPT
 ip6tables -t nat -A POSTROUTING -o $out_interface -j MASQUERADE
 ```
+
+对于Windows客户端, 还需要配置ipv4的默认路由(因为wintun没有ipv6), Linux客户端需要配置ipv6的默认路由(ipv4不添加也能用):
+```shell
+# Windows
+route ADD 0.0.0.0 MASK 0.0.0.0 172.16.1.1 METRIC 150
+# Linux
+ip -6 route add default via fddd:1234::1 metric 150
+```
+
+在客户端上验证隧道是否可正常使用:
+```shell title="Linux"
+# Tun内网测试
+ping 172.16.1.1
+ping fddd:1234::1
+# Tun外网测试
+ping -I tun0 223.5.5.5
+ping -I tun0 2001:4860:4860::8888
+
+# 测试IP
+curl --interface tun0 test.ipw.cn
+curl --interface tun0 -6 test.ipw.cn
+```
+> 对于Windows, 把ping命令中的 -I tun0 换成 -S 172.16.1.2, 把curl中的tun0换成172.16.1.2
+
 ## Gost隧道 + Xray传输
 尽管上面的方法已经足够抗GFW和QoS了, 但还是要给出更保险的一种方法. 毕竟gost不是专为了翻墙而生的, 专业的事交给专业的人去做. <br>
 如下配置使用gost作为创建隧道的软件, 其tun数据流通过Xray进行传输, 但为了方便验证, `server.json`中的入站部分和`client.json`中的出站部分仅仅使用了vless+TCP传输, 实际使用时记得修改这两部分. <br>
@@ -503,36 +530,18 @@ Gost   <--(socks5)-->   Xray    <--(ANY)-->    Xray  <--(socks5)--> Gost   <br>
 
 ```shell
 # SERVER
-sudo ./gost -L=tun://:5421?net=172.16.1.1/24,fddd:1234::1 -L socks5://:5555?udp=true
-iptables -t nat -A PREROUTING -p tcp --dport 5678 -j DNAT --to-destination 172.16.1.2:5678
-iptables -t nat -A PREROUTING -p udp --dport 5678 -j DNAT --to-destination 172.16.1.2:5678
-iptables -A FORWARD -i tun0 -j ACCEPT
-iptables -A FORWARD -o tun0 -j ACCEPT
-iptables -t nat -A POSTROUTING -o ens5 -j MASQUERADE
-
-ip6tables -t nat -A PREROUTING -p tcp --dport 5678 -j DNAT --to-destination [fddd:1234::2]:5678
-ip6tables -t nat -A PREROUTING -p udp --dport 5678 -j DNAT --to-destination [fddd:1234::2]:5678
-ip6tables -A FORWARD -i tun0 -j ACCEPT
-ip6tables -A FORWARD -o tun0 -j ACCEPT
-ip6tables -t nat -A POSTROUTING -o ens5 -j MASQUERADE
+./gost -L "tun://:5421?net=172.16.1.1/24,fddd:1234::1/64" -L socks5://:5555?udp=true
+# 参见上一部分对iptables的配置, 这里省略
 
 # Client
-sudo ./gost -L=tun://:0/:5421?net=172.16.1.2/24,fddd:1234::2 -F socks5://127.0.0.1:5555?relay=udp
-## 在客户端上配置默认路由, 这样tun0接口才能上网
-# 对于Linux客户端
-route add default via 10.126.126.1 metric 150
-route -6 add default via fddd:1234::1 metric 150
-# 对于Windows客户端
-route ADD 0.0.0.0 MASK 0.0.0.0 10.126.126.1 METRIC 150
-route -6 ADD ::/0 fddd:1234::1 METRIC 150
+./gost -L "tun://:0/:5421?net=172.16.1.2/24,fddd:1234::2/64&keepAlive=true" -F socks5://127.0.0.1:5555?relay=udp
+# 客户端配置路由的部分参加上面
 ```
 
 ## Easytier隧道
-使用easytier创建tun隧道, 再用iptables转发流量 <br>
-
 由于ET的GUI生成的配置比较简陋, 无法满足此方法中的特定需求, 建议使用CLI或者配置文件 <br>
 
-> 如果使用easytier的端口转发功能而不是iptables转发, 流量来源会变成VPS上tun设备的IP
+> 如果使用easytier的端口转发功能而不是iptables转发, 流量来源会变成VPS上tun设备的IP, 可见ET也是在应用层转发
 
 ```shell
 # 服务器: 建立隧道
@@ -542,21 +551,13 @@ route -6 ADD ::/0 fddd:1234::1 METRIC 150
 ./easytier-core --ipv4 10.126.126.2/24 --ipv6 fddd:1234::2/64 --network-name NetworkName_CHANGE_THIS --network-secret NetworkPWD_CHANGE_THIS -p tcp://public.easytier.cn:11010 --exit-nodes 10.126.126.1,fddd:1234::1
 ## 创建完隧道后还只能ping通对方, tun0接口还不能上网
 ## 客户端要额外手动配置一条默认路由后tun0接口才能正常上网, 注意每次启动隧道时都要设置
-# 对于Linux客户端 (需要root权限)
+# 对于Linux客户端
 route add default via 10.126.126.1 metric 150
 route -6 add default via fddd:1234::1 metric 150
-# 对于Windows客户端 (需要管理员权限)
+# 对于Windows客户端
 route ADD 0.0.0.0 MASK 0.0.0.0 10.126.126.1 METRIC 150
 route -6 ADD ::/0 fddd:1234::1 METRIC 150
 
-# 检查tun0接口是否正常 (如果你的网络环境无法正常解析4.ipw.cn和6.ipw.cn, 例如ipv6的DNS被过滤掉了, 请手动在hosts中指定ip地址, 或者通过resolve参数指定ip)
-ping -S 10.126.126.2 10.126.126.1
-ping -S 10.126.126.2 223.5.5.5
-curl --interface 10.126.126.2 4.ipw.cn
-
-ping -S fddd:1234::2 fddd:1234::1
-ping -S fddd:1234::2 2001:4860:4860::8888
-curl --interface fddd:1234::2 6.ipw.cn
 
 # server ipv4路由配置
 iptables -t nat -A PREROUTING -p tcp --dport 5678 -j DNAT --to-destination 10.126.126.2:5678
@@ -569,6 +570,16 @@ ip6tables -t nat -A PREROUTING -p udp --dport 5678 -j DNAT --to-destination [fdd
 ip6tables -A FORWARD -i tun0 -j ACCEPT
 ip6tables -A FORWARD -o tun0 -j ACCEPT
 
+# 检查tun0接口是否正常 (如果你的网络环境无法正常解析4.ipw.cn和6.ipw.cn, 例如ipv6的DNS被过滤掉了, 请手动在hosts中指定ip地址, 或者通过resolve参数指定ip)
+## Windows, Linux参见上面
+ping -S 10.126.126.2 10.126.126.1
+ping -S 10.126.126.2 223.5.5.5
+curl --interface 10.126.126.2 4.ipw.cn
+
+ping -S fddd:1234::2 fddd:1234::1
+ping -S fddd:1234::2 2001:4860:4860::8888
+curl --interface fddd:1234::2 6.ipw.cn
+
 ## FIX BUGS, 非必要勿使用
 iptables -t nat -A POSTROUTING -o ens5 -j MASQUERADE
 ip6tables -t nat -A POSTROUTING -o ens5 -j MASQUERADE
@@ -579,7 +590,6 @@ ip6tables -t nat -A POSTROUTING -o ens5 -j MASQUERADE
 :::
 
 可能是这种指定出口流量的方法和翻墙VPN极其相似, 网上关于exit node的用法极少... <br>
-另外, 由于Easytier流量特征和Wireguard类似, 极易被GFW识别, 故仅推荐在国内使用. <br>
 
 Easytier的监听器, 只需要在中转服务器上设置监听tcp + udp + wss即可 <br>
 

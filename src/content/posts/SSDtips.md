@@ -37,7 +37,7 @@ cat /sys/block/XXXXXX/device/scsi_disk/XXXXXX/provisioning_mode
 # 如果输出为full, 代表内核当前是没有检测到设备支持Trim特性, 解决方法也比较简单，直接echo unmap到这个文件
 echo unmap > /sys/block/XXXXXX/device/scsi_disk/XXXXXX/provisioning_mode
 
-# 设置设备在插入时自动更新其状态
+# 设置设备在插入时自动更新其状态 (以rtl9220为例)
 echo 'ACTION=="add|change", ATTRS{idVendor}=="0bda", ATTRS{idProduct}=="9220", SUBSYSTEM=="scsi_disk", ATTR{provisioning_mode}="unmap"' >> /etc/udev/rules.d/10-uas-discard.rules
 
 sudo udevadm control --reload-rules
